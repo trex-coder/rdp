@@ -4,78 +4,22 @@ on: [push, workflow_dispatch]
 
 jobs:
   build:
+
     runs-on: windows-latest
 
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
-
-    - name: Enable RDP
-      shell: powershell
-      run: |
-        Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
-        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -Value 0
-
-    - name: Install Ngrok
-      shell: powershell
-      run: |
-        Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
-        Expand-Archive ngrok.zip -DestinationPath .
-        .\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
-
-    - name: Start Ngrok Tunnel for RDP
-      shell: powershell
-      run: |
-        Start-Process -NoNewWindow powershell -ArgumentList ".\ngrok.exe tcp 3389 --region=us"
-        Start-Sleep -Seconds 10
-
-    - name: Get Ngrok Public URL
-      id: ngrok
-      shell: powershell
-      run: |
-        $url = (Invoke-RestMethod http://127.0.0.1:4040/api/tunnels).tunnels[0].public_url
-        Write-Output "NGROK_URL=$url"
-        Add-Content -Path $env:GITHUB_ENV -Value "NGROK_URL=$url"
-
-    - name: Upload RDP URL to Firebase
+    - name: Download
+      run: Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-windows-amd64.zip -OutFile ngrok.zip
+    - name: Extract
+      run: Expand-Archive ngrok.zip
+    - name: Auth
+      run: .\ngrok\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
       env:
-        FIREBASE_KEY: ${{ secrets.FIREBASE_CREDENTIALS_JSON }}
-        NGROK_URL: ${{ env.NGROK_URL }}
-        UID: ${{ github.actor }}
-      shell: powershell
-      run: |
-        Set-Content -Path creds.json -Value $Env:FIREBASE_KEY
-        pip install firebase-admin
-        python upload_url.py
-
-    - name: Output URL in loop
-      shell: powershell
-      run: |
-        while ($true) {
-          Write-Output "Access RDP: $Env:NGROK_URL"
-          Start-Sleep -Seconds 10
-        }
-
-  cleanup:
-    needs: build
-    runs-on: windows-latest
-    if: ${{ cancelled() }}
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
-
-    - name: Set up Python and credentials
-      env:
-        FIREBASE_KEY: ${{ secrets.FIREBASE_CREDENTIALS_JSON }}
-      shell: powershell
-      run: |
-        Set-Content -Path creds.json -Value $Env:FIREBASE_KEY
-        pip install firebase-admin
-
-    - name: Set deploy_status to 0 on cancel
-      env:
-        UID: ${{ github.actor }}
-      shell: powershell
-      run: python cancel_cleanup.py
+        NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
+    - name: Enable TS
+      run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server'-name "fDenyTSConnections" -Value 0
+    - run: Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+    - run: Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -name "UserAuthentication" -Value 1
+    - run: Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
+    - name: Create Tunnel
+      run: .\ngrok\ngrok.exe tcp 3389
