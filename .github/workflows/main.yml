@@ -23,31 +23,53 @@ jobs:
       run: |
         Write-Host "Starting Cloudflare Tunnel..."
 
-        # Start cloudflared and capture stdout to a file
-        Start-Process -FilePath ".\cloudflared.exe" `
+        # Remove previous log if exists
+        if (Test-Path "output.txt") { Remove-Item "output.txt" }
+
+        # Start cloudflared, but MUST capture stderr too
+        $proc = Start-Process -FilePath ".\cloudflared.exe" `
             -ArgumentList "tunnel --url tcp://localhost:3389" `
-            -RedirectStandardOutput output.txt `
-            -NoNewWindow
+            -NoNewWindow `
+            -RedirectStandardOutput "output.txt" `
+            -RedirectStandardError "output.txt" `
+            -PassThru
 
-        Write-Host "Waiting for TCP tunnel URL..."
+        Write-Host "Waiting for tunnel hostname..."
 
-        # Wait indefinitely until the tcp:// URL appears
-        $url = $null
+        $hostname = $null
         while ($true) {
             Start-Sleep -Seconds 2
-            if (Test-Path output.txt) {
-                $match = (Get-Content output.txt | Select-String "tcp://")
+
+            # Force-flush buffers
+            $proc.WaitForExit(0)
+
+            if (Test-Path "output.txt") {
+                # Cloudflare quick tunnels ALWAYS output https://xxxxx.trycloudflare.com
+                $match = Select-String -Path "output.txt" -Pattern "https://.*trycloudflare.com"
                 if ($match) {
-                    $url = $match.Matches[0].Value
+                    $url = $match.Matches[0].Value.Trim()
+                    $hostname = $url.Replace("https://", "")
                     break
                 }
             }
         }
 
-        Write-Host "Tunnel URL: $url"
+        if (-not $hostname) {
+            Write-Host "❌ Could not detect tunnel hostname"
+            Get-Content output.txt
+            exit 1
+        }
 
-        # Keep job alive
+        # Create the TCP URL that RDP clients use
+        $tcpurl = "tcp://$hostname:3389"
+
+        Write-Host "==========================================="
+        Write-Host "     ✔ Cloudflare Tunnel Ready"
+        Write-Host "     RDP URL: $tcpurl"
+        Write-Host "==========================================="
+
+        # Keep tunnel alive
         while ($true) {
             Start-Sleep -Seconds 30
-            Write-Host "Tunnel still active: $url"
+            Write-Host "Tunnel still active: $tcpurl"
         }
