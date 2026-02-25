@@ -11,70 +11,62 @@ jobs:
       run: |
         Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
         Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-        Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 1
         Set-LocalUser -Name "runneradmin" -Password (ConvertTo-SecureString -AsPlainText "P@ssw0rd!" -Force)
 
-    - name: Download cloudflared
-      run: |
-        Invoke-WebRequest https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe -OutFile cloudflared.exe
 
-    - name: Start Cloudflare Tunnel
+    - name: Install Node + LocalTunnel
+      run: |
+        powershell -Command "iwr https://nodejs.org/dist/v18.17.1/node-v18.17.1-x64.msi -OutFile node.msi"
+        msiexec /i node.msi /qn
+        npm install -g localtunnel
+
+
+    - name: Install stunnel
+      run: |
+        Invoke-WebRequest https://www.stunnel.org/downloads/stunnel-5.71-win64-installer.exe -OutFile stunnel.exe
+        Start-Process stunnel.exe -ArgumentList "/silent" -Wait
+
+
+    - name: Create stunnel config
+      run: |
+        echo "[RDPHTTPS]" > "C:\Program Files\stunnel\config\rdp.conf"
+        echo "client = no" >> "C:\Program Files\stunnel\config\rdp.conf"
+        echo "accept = 4433" >> "C:\Program Files\stunnel\config\rdp.conf"
+        echo "connect = 127.0.0.1:3389" >> "C:\Program Files\stunnel\config\rdp.conf"
+
+        Start-Process "C:\Program Files\stunnel\bin\stunnel.exe" -ArgumentList "C:\Program Files\stunnel\config\rdp.conf"
+
+
+    - name: Start LocalTunnel
       shell: powershell
       run: |
-        Write-Host "Starting Cloudflare Tunnel..."
+        Write-Host "Starting LocalTunnel..."
 
-        Remove-Item stdout.txt -ErrorAction SilentlyContinue
-        Remove-Item stderr.txt -ErrorAction SilentlyContinue
+        Start-Process lt.cmd -ArgumentList "--port 4433 --print-requests" -RedirectStandardOutput lt.log
 
-        # Start Cloudflared with DEBUG so hostname appears
-        $proc = Start-Process -FilePath ".\cloudflared.exe" `
-            -ArgumentList "tunnel --url tcp://localhost:3389 --loglevel debug" `
-            -NoNewWindow `
-            -RedirectStandardOutput "stdout.txt" `
-            -RedirectStandardError "stderr.txt" `
-            -PassThru
-
-        Write-Host "Waiting for tunnel hostname..."
-
-        $hostname = $null
-
-        while (-not $hostname) {
-            Start-Sleep -Seconds 2
-
-            $lines = @()
-            if (Test-Path "stdout.txt") { $lines += Get-Content "stdout.txt" }
-            if (Test-Path "stderr.txt") { $lines += Get-Content "stderr.txt" }
-
-            foreach ($line in $lines) {
-                # HTTPS Format
-                if ($line -match "https://[A-Za-z0-9\-]+\.trycloudflare\.com") {
-                    $hostname = ($line -replace ".*https://", "" -replace "\s.*", "")
-                    break
-                }
-
-                # TCP Format (rare but possible)
-                if ($line -match "tcp://[A-Za-z0-9\-]+\.trycloudflare\.com:\d+") {
-                    $hostname = ($line -replace ".*tcp://", "" -replace "\s.*", "")
-                    break
+        $url = $null
+        while (-not $url) {
+            Start-Sleep 2
+            if (Test-Path lt.log) {
+                foreach ($line in Get-Content lt.log) {
+                    if ($line -match "https://.*\.loca\.lt") {
+                        $url = $line.Trim()
+                        break
+                    }
                 }
             }
         }
 
-        # Build final RDP TCP URL
-        # In https mode, $hostname = xxxxx.trycloudflare.com
-        if ($hostname -notmatch ":\d+$") {
-            $tcpurl = "tcp://$hostname:3389"
-        } else {
-            $tcpurl = "tcp://$hostname"
-        }
+        Write-Host "=================================="
+        Write-Host " Public RDP Tunnel Ready!"
+        Write-Host " Connect using ANY HTTPS→TCP bridge tool"
+        Write-Host " URL: $url"
+        Write-Host " Username: runneradmin"
+        Write-Host " Password: P@ssw0rd!"
+        Write-Host "=================================="
 
-        Write-Host "======================================="
-        Write-Host " Cloudflare Tunnel Ready"
-        Write-Host " RDP URL: $tcpurl"
-        Write-Host "======================================="
-
-        # Keep runner alive forever
+        # Keep alive
         while ($true) {
-            Start-Sleep -Seconds 30
-            Write-Host "Tunnel still active: $tcpurl"
+            Start-Sleep 30
+            Write-Host "Tunnel active at $url"
         }
