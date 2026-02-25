@@ -23,13 +23,16 @@ jobs:
       run: |
         Write-Host "Starting Cloudflare Tunnel..."
 
-        if (Test-Path "output.txt") { Remove-Item "output.txt" }
+        # Cleanup old logs
+        if (Test-Path "stdout.txt") { Remove-Item "stdout.txt" }
+        if (Test-Path "stderr.txt") { Remove-Item "stderr.txt" }
 
+        # Start cloudflared with separate stdout/stderr logs
         $proc = Start-Process -FilePath ".\cloudflared.exe" `
             -ArgumentList "tunnel --url tcp://localhost:3389" `
             -NoNewWindow `
-            -RedirectStandardOutput "output.txt" `
-            -RedirectStandardError "output.txt" `
+            -RedirectStandardOutput "stdout.txt" `
+            -RedirectStandardError "stderr.txt" `
             -PassThru
 
         Write-Host "Waiting for tunnel hostname..."
@@ -38,21 +41,25 @@ jobs:
 
         while ($true) {
             Start-Sleep -Seconds 2
-            $proc.WaitForExit(0)
 
-            if (Test-Path "output.txt") {
-                $match = Select-String -Path "output.txt" -Pattern "https://.*trycloudflare.com"
-                if ($match) {
-                    $url = $match.Matches[0].Value.Trim()
-                    $hostname = $url.Replace("https://", "")
+            # Check both stdout and stderr logs
+            $lines = @()
+            if (Test-Path "stdout.txt") { $lines += Get-Content stdout.txt }
+            if (Test-Path "stderr.txt") { $lines += Get-Content stderr.txt }
+
+            # Cloudflare always prints https://xxxxx.trycloudflare.com
+            foreach ($line in $lines) {
+                if ($line -match "https://.*trycloudflare.com") {
+                    $hostname = $line.Trim().Replace("https://", "")
                     break
                 }
             }
+
+            if ($hostname) { break }
         }
 
         if (-not $hostname) {
             Write-Host "Could not detect tunnel hostname"
-            Get-Content output.txt
             exit 1
         }
 
@@ -63,6 +70,7 @@ jobs:
         Write-Host " RDP URL: $tcpurl"
         Write-Host "==========================================="
 
+        # Keep job alive
         while ($true) {
             Start-Sleep -Seconds 30
             Write-Host "Tunnel still active: $tcpurl"
