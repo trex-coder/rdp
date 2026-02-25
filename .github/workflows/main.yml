@@ -24,10 +24,10 @@ jobs:
         Write-Host "Starting Cloudflare Tunnel..."
 
         # Cleanup old logs
-        if (Test-Path "stdout.txt") { Remove-Item "stdout.txt" }
-        if (Test-Path "stderr.txt") { Remove-Item "stderr.txt" }
+        Remove-Item stdout.txt -ErrorAction SilentlyContinue
+        Remove-Item stderr.txt -ErrorAction SilentlyContinue
 
-        # Start cloudflared with separate stdout/stderr logs
+        # --- FIXED: The last backtick was REMOVED to prevent stdout/stderr conflict ---
         $proc = Start-Process -FilePath ".\cloudflared.exe" `
             -ArgumentList "tunnel --url tcp://localhost:3389" `
             -NoNewWindow `
@@ -39,39 +39,30 @@ jobs:
 
         $hostname = $null
 
-        while ($true) {
+        while (-not $hostname) {
             Start-Sleep -Seconds 2
 
-            # Check both stdout and stderr logs
             $lines = @()
-            if (Test-Path "stdout.txt") { $lines += Get-Content stdout.txt }
-            if (Test-Path "stderr.txt") { $lines += Get-Content stderr.txt }
+            if (Test-Path stdout.txt) { $lines += Get-Content stdout.txt }
+            if (Test-Path stderr.txt) { $lines += Get-Content stderr.txt }
 
-            # Cloudflare always prints https://xxxxx.trycloudflare.com
             foreach ($line in $lines) {
-                if ($line -match "https://.*trycloudflare.com") {
-                    $hostname = $line.Trim().Replace("https://", "")
+                if ($line -match "https://[a-zA-Z0-9\-]+\.trycloudflare\.com") {
+                    $hostname = $line.Trim() -replace "https://", ""
                     break
                 }
             }
-
-            if ($hostname) { break }
-        }
-
-        if (-not $hostname) {
-            Write-Host "Could not detect tunnel hostname"
-            exit 1
         }
 
         $tcpurl = "tcp://$hostname:3389"
 
-        Write-Host "==========================================="
+        Write-Host "======================================="
         Write-Host " Cloudflare Tunnel Ready"
         Write-Host " RDP URL: $tcpurl"
-        Write-Host "==========================================="
+        Write-Host "======================================="
 
-        # Keep job alive
+        # Keep runner alive
         while ($true) {
             Start-Sleep -Seconds 30
-            Write-Host "Tunnel still active: $tcpurl"
+            Write-Host ("Tunnel still active: {0}" -f $tcpurl)
         }
