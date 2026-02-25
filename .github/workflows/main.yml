@@ -4,78 +4,62 @@ on: [push, workflow_dispatch]
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
 
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
 
-    - name: Install dependencies
+    - name: Enable RDP
+      shell: powershell
       run: |
-        sudo apt update
-        sudo apt install -y curl unzip python3 python3-pip jq \
-          x11vnc xvfb firefox plasma-desktop sddm kde-spectacle \
-          nodejs npm git net-tools
+        Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server" -Name "fDenyTSConnections" -Value 0
+        Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+        Set-ItemProperty -Path "HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp" -Name "UserAuthentication" -Value 0
 
-    - name: Install noVNC
+    - name: Install Ngrok
+      shell: powershell
       run: |
-        git clone https://github.com/trex-coder/Novnc.git
-        cd Novnc
-        git clone https://github.com/novnc/websockify.git
-        npm install
+        Invoke-WebRequest https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-windows-amd64.zip -OutFile ngrok.zip
+        Expand-Archive ngrok.zip -DestinationPath .
+        .\ngrok.exe authtoken $Env:NGROK_AUTH_TOKEN
 
-    - name: Start KDE Plasma in Xvfb
+    - name: Start Ngrok Tunnel for RDP
+      shell: powershell
       run: |
-        export DISPLAY=:1
-        Xvfb :1 -screen 0 1280x720x16 &
-        sleep 2
-        startplasma-x11 &
+        Start-Process -NoNewWindow powershell -ArgumentList ".\ngrok.exe tcp 3389 --region=us"
+        Start-Sleep -Seconds 10
 
-    - name: Start x11vnc
-      run: |
-        export DISPLAY=:1
-        x11vnc -display :1 -nopw -forever -shared -rfbport 5900 &
-
-    - name: Start noVNC
-      run: |
-        cd Novnc
-        ./utils/novnc_proxy --vnc localhost:5900 --listen 6901 &
-
-    - name: Download and start ngrok
-      run: |
-        curl -s https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-stable-linux-amd64.zip -o ngrok.zip
-        unzip ngrok.zip
-        ./ngrok authtoken ${{ secrets.NGROK_AUTH_TOKEN }}
-        nohup ./ngrok http 6901 > ngrok.log &
-        sleep 10
-
-    - name: Get Ngrok public URL
+    - name: Get Ngrok Public URL
       id: ngrok
+      shell: powershell
       run: |
-        URL=$(curl -s http://127.0.0.1:4040/api/tunnels | jq -r '.tunnels[0].public_url')
-        echo "NGROK_URL=$URL"
-        echo "NGROK_URL=$URL" >> $GITHUB_ENV
+        $url = (Invoke-RestMethod http://127.0.0.1:4040/api/tunnels).tunnels[0].public_url
+        Write-Output "NGROK_URL=$url"
+        Add-Content -Path $env:GITHUB_ENV -Value "NGROK_URL=$url"
 
-    - name: Upload noVNC URL to Firebase
+    - name: Upload RDP URL to Firebase
       env:
         FIREBASE_KEY: ${{ secrets.FIREBASE_CREDENTIALS_JSON }}
         NGROK_URL: ${{ env.NGROK_URL }}
         UID: ${{ github.actor }}
+      shell: powershell
       run: |
-        echo "$FIREBASE_KEY" > creds.json
+        Set-Content -Path creds.json -Value $Env:FIREBASE_KEY
         pip install firebase-admin
-        python3 upload_url.py
+        python upload_url.py
 
-    - name: Loop output of URL
+    - name: Output URL in loop
+      shell: powershell
       run: |
-        while true; do
-          echo "Access URL: ${{ env.NGROK_URL }}"
-          sleep 10
-        done
+        while ($true) {
+          Write-Output "Access RDP: $Env:NGROK_URL"
+          Start-Sleep -Seconds 10
+        }
 
   cleanup:
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: windows-latest
     if: ${{ cancelled() }}
 
     steps:
@@ -85,11 +69,13 @@ jobs:
     - name: Set up Python and credentials
       env:
         FIREBASE_KEY: ${{ secrets.FIREBASE_CREDENTIALS_JSON }}
+      shell: powershell
       run: |
-        echo "$FIREBASE_KEY" > creds.json
+        Set-Content -Path creds.json -Value $Env:FIREBASE_KEY
         pip install firebase-admin
 
     - name: Set deploy_status to 0 on cancel
       env:
         UID: ${{ github.actor }}
-      run: python3 cancel_cleanup.py
+      shell: powershell
+      run: python cancel_cleanup.py
