@@ -23,10 +23,8 @@ jobs:
       run: |
         Write-Host "Starting Cloudflare Tunnel..."
 
-        # Remove previous log if exists
         if (Test-Path "output.txt") { Remove-Item "output.txt" }
 
-        # Start cloudflared, but MUST capture stderr too
         $proc = Start-Process -FilePath ".\cloudflared.exe" `
             -ArgumentList "tunnel --url tcp://localhost:3389" `
             -NoNewWindow `
@@ -37,14 +35,12 @@ jobs:
         Write-Host "Waiting for tunnel hostname..."
 
         $hostname = $null
+
         while ($true) {
             Start-Sleep -Seconds 2
-
-            # Force-flush buffers
             $proc.WaitForExit(0)
 
             if (Test-Path "output.txt") {
-                # Cloudflare quick tunnels ALWAYS output https://xxxxx.trycloudflare.com
                 $match = Select-String -Path "output.txt" -Pattern "https://.*trycloudflare.com"
                 if ($match) {
                     $url = $match.Matches[0].Value.Trim()
@@ -55,20 +51,18 @@ jobs:
         }
 
         if (-not $hostname) {
-            Write-Host "❌ Could not detect tunnel hostname"
+            Write-Host "Could not detect tunnel hostname"
             Get-Content output.txt
             exit 1
         }
 
-        # Create the TCP URL that RDP clients use
         $tcpurl = "tcp://$hostname:3389"
 
         Write-Host "==========================================="
-        Write-Host "     ✔ Cloudflare Tunnel Ready"
-        Write-Host "     RDP URL: $tcpurl"
+        Write-Host " Cloudflare Tunnel Ready"
+        Write-Host " RDP URL: $tcpurl"
         Write-Host "==========================================="
 
-        # Keep tunnel alive
         while ($true) {
             Start-Sleep -Seconds 30
             Write-Host "Tunnel still active: $tcpurl"
