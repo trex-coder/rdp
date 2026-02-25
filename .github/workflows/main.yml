@@ -24,17 +24,17 @@ jobs:
         Write-Host "Starting Cloudflare Tunnel..."
 
         # Start cloudflared and capture stdout to a file
-        $process = Start-Process -FilePath ".\cloudflared.exe" `
+        Start-Process -FilePath ".\cloudflared.exe" `
             -ArgumentList "tunnel --url tcp://localhost:3389" `
             -RedirectStandardOutput output.txt `
-            -NoNewWindow `
-            -PassThru
+            -NoNewWindow
 
-        # Wait for URL to appear
-        Write-Host "Waiting for tunnel URL..."
+        Write-Host "Waiting for TCP tunnel URL..."
+
+        # Wait indefinitely until the tcp:// URL appears
         $url = $null
-        for ($i=0; $i -lt 30; $i++) {
-            Start-Sleep -Seconds 1
+        while ($true) {
+            Start-Sleep -Seconds 2
             if (Test-Path output.txt) {
                 $match = (Get-Content output.txt | Select-String "tcp://")
                 if ($match) {
@@ -44,15 +44,9 @@ jobs:
             }
         }
 
-        if (-Not $url) {
-            Write-Host "Failed to obtain tunnel URL."
-            Get-Content output.txt
-            exit 1
-        }
-
         Write-Host "Tunnel URL: $url"
 
-        # Keep process alive and print tunnel repeatedly
+        # Keep job alive
         while ($true) {
             Start-Sleep -Seconds 30
             Write-Host "Tunnel still active: $url"
