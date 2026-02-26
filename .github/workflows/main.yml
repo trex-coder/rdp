@@ -4,10 +4,10 @@ on: [push, workflow_dispatch]
 
 jobs:
   build:
-
     runs-on: macos-latest
 
     steps:
+
     - name: Download ngrok
       run: curl -o ngrok.zip https://bin.equinox.io/c/bNyj1mQVY4c/ngrok-v3-stable-darwin-amd64.zip
 
@@ -19,21 +19,30 @@ jobs:
       env:
         NGROK_AUTH_TOKEN: ${{ secrets.NGROK_AUTH_TOKEN }}
 
-    - name: Enable VNC (Screen Sharing) and Set Password
+    # -------------------------------
+    # ENABLE VNC PROPERLY (PASSWORD ONLY)
+    # -------------------------------
+    - name: Enable VNC Legacy Mode + Set Password
       run: |
-        echo "Setting VNC password..."
-        # macOS VNC password must be <=8 chars
         VNC_PASS="12345678"
+        echo "Enabling VNC legacy mode..."
 
-        # Enable Screen Sharing
+        # Enable remote management
         sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
-          -activate -configure -access -on \
-          -restart -agent -privs -all
+          -activate -configure -access -on -privs -all -restart -agent
 
-        # Set VNC password
-        sudo defaults write /Library/Preferences/com.apple.VNCSettings VNCPassword -data $(echo -n "$VNC_PASS" | xxd -ps | tr -d '\n')
+        # Enable VNC password-only mode
+        sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+          -configure -clientopts -setvnclegacy yes -vnclegacy yes
 
-        echo "VNC password set to: $VNC_PASS"
+        # Set VNC password (8 chars max)
+        sudo /System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart \
+          -configure -clientopts -setvncpw "$VNC_PASS"
 
-    - name: Start ngrok VNC Tunnel (Port 5900)
+        echo "VNC password set to $VNC_PASS"
+
+    # -------------------------------
+    # START NGROK TUNNEL
+    # -------------------------------
+    - name: Start ngrok VNC Tunnel
       run: ./ngrok/ngrok tcp 5900
